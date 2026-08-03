@@ -10,15 +10,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class MPD_PDF {
-	/** @var array<int,array{name:string,email:string,photo:string}> */
+	/** @var array<int,array{name:string,email:string,title:string,company:string,photo:string}> */
 	private $members = array();
 
 	/** Add one member to the document. */
-	public function add_member( $name, $email, $photo_path = '' ) {
+	public function add_member( $name, $email, $photo_path = '', $title = '', $company = '' ) {
 		$this->members[] = array(
-			'name'  => $this->plain_text( $name ),
-			'email' => $this->plain_text( $email ),
-			'photo' => is_string( $photo_path ) ? $photo_path : '',
+			'name'    => $this->plain_text( $name ),
+			'email'   => $this->plain_text( $email ),
+			'title'   => $this->plain_text( $title ),
+			'company' => $this->plain_text( $company ),
+			'photo'   => is_string( $photo_path ) ? $photo_path : '',
 		);
 	}
 
@@ -139,8 +141,8 @@ final class MPD_PDF {
 		}
 
 		foreach ( $members as $index => $member ) {
-			$column = (int) floor( $index / 10 );
-			$row    = $index % 10;
+			$column = $index % 2;
+			$row    = (int) floor( $index / 2 );
 			$x      = 30 + ( $column * 283 );
 			$y      = 710 - ( $row * 70 );
 			$content .= $this->card_content( $member, isset( $images[ $index ] ) ? $images[ $index ] : null, $x, $y );
@@ -158,14 +160,30 @@ final class MPD_PDF {
 		$photo_size = 56;
 		$photo_x    = $x + $width - $photo_size - 4;
 		$photo_y    = $y + 4;
-		$name       = $this->pdf_string( $this->truncate( $member['name'], 38 ) );
-		$email      = $this->pdf_string( $this->truncate( $member['email'], 46 ) );
-		$name_size  = $this->fit_font_size( $member['name'], 10.5, 7, 185 );
-		$email_size = $this->fit_font_size( $member['email'], 8, 6, 185 );
+		$name         = $this->pdf_string( $this->truncate( $member['name'], 40 ) );
+		$email        = $this->pdf_string( $this->truncate( $member['email'], 49 ) );
+		$company      = $this->pdf_string( $this->truncate( $member['company'], 49 ) );
+		$title_lines  = $this->wrap_lines( $member['title'], 49, 2 );
+		$name_size    = $this->fit_font_size( $member['name'], 10.5, 7, 192 );
+		$email_size   = $this->fit_font_size( $member['email'], 7, 5.5, 192 );
+		$company_size = $this->fit_font_size( $member['company'], 7.5, 5.5, 192 );
 
 		$out  = "1 1 1 rg 0.79 0.82 0.86 RG 0.7 w " . $this->number( $x ) . ' ' . $this->number( $y ) . ' ' . $width . ' ' . $height . " re B\n";
-		$out .= "0.11 0.17 0.25 rg\nBT /F2 " . $this->number( $name_size ) . ' Tf ' . $this->number( $x + 9 ) . ' ' . $this->number( $y + 38 ) . " Td (" . $name . ") Tj ET\n";
-		$out .= "0.20 0.38 0.58 rg\nBT /F1 " . $this->number( $email_size ) . ' Tf ' . $this->number( $x + 9 ) . ' ' . $this->number( $y + 19 ) . " Td (" . $email . ") Tj ET\n";
+		$out .= "0.11 0.17 0.25 rg\nBT /F2 " . $this->number( $name_size ) . ' Tf ' . $this->number( $x + 9 ) . ' ' . $this->number( $y + 50 ) . " Td (" . $name . ") Tj ET\n";
+
+		$detail_y = $y + 37;
+		foreach ( $title_lines as $title_line ) {
+			$title_size = $this->fit_font_size( $title_line, 7.5, 5.5, 192 );
+			$out .= "0.22 0.25 0.29 rg\nBT /F1 " . $this->number( $title_size ) . ' Tf ' . $this->number( $x + 9 ) . ' ' . $this->number( $detail_y ) . ' Td (' . $this->pdf_string( $title_line ) . ") Tj ET\n";
+			$detail_y -= 10;
+		}
+		if ( '' !== $member['company'] ) {
+			$out .= "0.22 0.25 0.29 rg\nBT /F1 " . $this->number( $company_size ) . ' Tf ' . $this->number( $x + 9 ) . ' ' . $this->number( $detail_y ) . " Td (" . $company . ") Tj ET\n";
+			$detail_y -= 10;
+		}
+		if ( '' !== $member['email'] ) {
+			$out .= "0.20 0.38 0.58 rg\nBT /F1 " . $this->number( $email_size ) . ' Tf ' . $this->number( $x + 9 ) . ' ' . $this->number( $detail_y ) . " Td (" . $email . ") Tj ET\n";
+		}
 
 		if ( $image ) {
 			$scale = max( $photo_size / $image['width'], $photo_size / $image['height'] );
@@ -242,6 +260,24 @@ final class MPD_PDF {
 		}
 
 		return rtrim( substr( $value, 0, $length - 3 ) ) . '...';
+	}
+
+	/** Wrap text at word boundaries and limit it to a fixed number of lines. */
+	private function wrap_lines( $value, $line_length, $max_lines ) {
+		$value = trim( (string) $value );
+		if ( '' === $value ) {
+			return array();
+		}
+
+		$lines = explode( "\n", wordwrap( $value, $line_length, "\n", true ) );
+		if ( count( $lines ) <= $max_lines ) {
+			return $lines;
+		}
+
+		$visible = array_slice( $lines, 0, $max_lines - 1 );
+		$visible[] = $this->truncate( implode( ' ', array_slice( $lines, $max_lines - 1 ) ), $line_length );
+
+		return $visible;
 	}
 
 	/** Fit a single text line within an approximate maximum width. */

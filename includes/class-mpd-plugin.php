@@ -10,6 +10,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class MPD_Plugin {
+	/** BuddyBoss Extended Profile field IDs. */
+	const XPROFILE_LAST_NAME_FIELD_ID = 2;
+	const XPROFILE_TITLE_FIELD_ID   = 4;
+	const XPROFILE_COMPANY_FIELD_ID = 5;
+
 	/** @var MPD_Plugin|null */
 	private static $instance = null;
 
@@ -53,7 +58,7 @@ final class MPD_Plugin {
 		?>
 		<div class="wrap">
 			<h1><?php esc_html_e( 'Export RSVP Pictures', 'cen-event-member-pictures-creator' ); ?></h1>
-			<p><?php esc_html_e( 'Select one or more events. The PDF will contain each unique WordPress user who RSVP\'d as Going, including their name, email address, and WordPress avatar. Guest registrations without a WordPress account are excluded.', 'cen-event-member-pictures-creator' ); ?></p>
+			<p><?php esc_html_e( 'Select one or more events. The PDF will contain each unique WordPress user who RSVP\'d as Going, including their name, title, company, email address, and WordPress avatar. Guest registrations without a WordPress account are excluded.', 'cen-event-member-pictures-creator' ); ?></p>
 
 			<?php if ( ! $this->event_tickets_is_available() ) : ?>
 				<div class="notice notice-error inline"><p><?php esc_html_e( 'The Event Tickets plugin must be active before RSVP attendees can be exported.', 'cen-event-member-pictures-creator' ); ?></p></div>
@@ -148,7 +153,9 @@ final class MPD_Plugin {
 			$pdf->add_member(
 				$attendee['name'],
 				$attendee['email'],
-				$this->get_pdf_avatar_path( $attendee['avatar_identity'], $attendee['cache_key'] )
+				$this->get_pdf_avatar_path( $attendee['avatar_identity'], $attendee['cache_key'] ),
+				$attendee['title'],
+				$attendee['company']
 			);
 		}
 
@@ -187,7 +194,7 @@ final class MPD_Plugin {
 	 * Collect Going RSVP attendees with WordPress accounts and deduplicate by user ID.
 	 *
 	 * @param int[] $event_ids Event post IDs.
-	 * @return array<int,array{name:string,email:string,avatar_identity:mixed,cache_key:string}>
+	 * @return array<int,array{name:string,email:string,title:string,company:string,sort_last_name:string,avatar_identity:mixed,cache_key:string}>
 	 */
 	private function get_unique_rsvp_attendees( $event_ids ) {
 		$rsvp   = Tribe__Tickets__RSVP::get_instance();
@@ -233,6 +240,9 @@ final class MPD_Plugin {
 				$people[ $key ] = array(
 					'name'            => $name,
 					'email'           => $email,
+					'title'           => $this->get_xprofile_field( $user_id, self::XPROFILE_TITLE_FIELD_ID ),
+					'company'         => $this->get_xprofile_field( $user_id, self::XPROFILE_COMPANY_FIELD_ID ),
+					'sort_last_name'  => $this->get_sort_last_name( $user, $name ),
 					'avatar_identity' => $user_id,
 					'cache_key'       => 'user-' . $user_id,
 				);
@@ -242,7 +252,9 @@ final class MPD_Plugin {
 		uasort(
 			$people,
 			static function ( $left, $right ) {
-				return strcasecmp( $left['name'], $right['name'] );
+				$last_name_comparison = strcasecmp( $left['sort_last_name'], $right['sort_last_name'] );
+
+				return 0 !== $last_name_comparison ? $last_name_comparison : strcasecmp( $left['name'], $right['name'] );
 			}
 		);
 
@@ -274,6 +286,35 @@ final class MPD_Plugin {
 		$name  = trim( $first . ' ' . $last );
 
 		return $name ? $name : $user->display_name;
+	}
+
+	/** Return the best available last name for alphabetizing the PDF. */
+	private function get_sort_last_name( $user, $display_name ) {
+		$last_name = $this->get_xprofile_field( $user->ID, self::XPROFILE_LAST_NAME_FIELD_ID );
+		if ( ! $last_name ) {
+			$last_name = trim( (string) get_user_meta( $user->ID, 'last_name', true ) );
+		}
+
+		if ( ! $last_name ) {
+			$name_parts = preg_split( '/\s+/', trim( (string) $display_name ) );
+			$last_name  = $name_parts ? end( $name_parts ) : '';
+		}
+
+		return $last_name;
+	}
+
+	/** Return a BuddyBoss/BuddyPress Extended Profile field value. */
+	private function get_xprofile_field( $user_id, $field_id ) {
+		if ( ! function_exists( 'xprofile_get_field_data' ) ) {
+			return '';
+		}
+
+		$value = xprofile_get_field_data( absint( $field_id ), absint( $user_id ), 'comma' );
+		if ( is_wp_error( $value ) || is_array( $value ) ) {
+			return '';
+		}
+
+		return trim( wp_strip_all_tags( (string) $value ) );
 	}
 
 	/** Return the export page URL. */
