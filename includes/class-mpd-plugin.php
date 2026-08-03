@@ -2,7 +2,7 @@
 /**
  * Main plugin controller.
  *
- * @package MemberPhotoDirectory
+ * @package CENEventMemberPicturesCreator
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -23,80 +23,248 @@ final class MPD_Plugin {
 	}
 
 	private function __construct() {
-		add_action( 'admin_menu', array( $this, 'add_export_page' ) );
+		add_action( 'admin_menu', array( $this, 'add_export_page' ), 20 );
 		add_action( 'admin_post_mpd_export_pdf', array( $this, 'export_pdf' ) );
 	}
 
-	/** Add the export screen under the standard Users menu. */
+	/** Add the export screen to The Events Calendar's Events menu. */
 	public function add_export_page() {
-		add_users_page(
-			__( 'Export User Directory', 'member-photo-directory' ),
-			__( 'Export Directory PDF', 'member-photo-directory' ),
-			'list_users',
+		add_submenu_page(
+			'edit.php?post_type=tribe_events',
+			__( 'Export RSVP Pictures', 'cen-event-member-pictures-creator' ),
+			__( 'Export Pictures', 'cen-event-member-pictures-creator' ),
+			'edit_tribe_events',
 			'mpd-export',
 			array( $this, 'render_export_page' )
 		);
 	}
 
-	/** Render the wp-admin export screen. */
+	/** Render the event selection screen. */
 	public function render_export_page() {
+		if ( ! current_user_can( 'edit_tribe_events' ) ) {
+			wp_die(
+				esc_html__( 'You are not allowed to export event attendees.', 'cen-event-member-pictures-creator' ),
+				esc_html__( 'Access denied', 'cen-event-member-pictures-creator' ),
+				array( 'response' => 403 )
+			);
+		}
+
+		$events = $this->get_events();
 		?>
 		<div class="wrap">
-			<h1><?php esc_html_e( 'Export WordPress User Directory', 'member-photo-directory' ); ?></h1>
-			<p><?php esc_html_e( 'The directory automatically includes every WordPress user and reads their first name, last name, email address, and WordPress avatar.', 'member-photo-directory' ); ?></p>
-			<p><a class="button button-primary" href="<?php echo esc_url( $this->get_export_url() ); ?>"><?php esc_html_e( 'Download PDF', 'member-photo-directory' ); ?></a></p>
+			<h1><?php esc_html_e( 'Export RSVP Pictures', 'cen-event-member-pictures-creator' ); ?></h1>
+			<p><?php esc_html_e( 'Select one or more events. The PDF will contain each unique WordPress user who RSVP\'d as Going, including their name, email address, and WordPress avatar. Guest registrations without a WordPress account are excluded.', 'cen-event-member-pictures-creator' ); ?></p>
+
+			<?php if ( ! $this->event_tickets_is_available() ) : ?>
+				<div class="notice notice-error inline"><p><?php esc_html_e( 'The Event Tickets plugin must be active before RSVP attendees can be exported.', 'cen-event-member-pictures-creator' ); ?></p></div>
+			<?php elseif ( isset( $_GET['mpd_notice'] ) && 'no_attendees' === sanitize_key( wp_unslash( $_GET['mpd_notice'] ) ) ) : // phpcs:ignore WordPress.Security.NonceVerification.Recommended ?>
+				<div class="notice notice-warning inline"><p><?php esc_html_e( 'No Going RSVP attendees with WordPress accounts were found for the selected events.', 'cen-event-member-pictures-creator' ); ?></p></div>
+			<?php endif; ?>
+
+			<?php if ( empty( $events ) ) : ?>
+				<p><?php esc_html_e( 'No events were found.', 'cen-event-member-pictures-creator' ); ?></p>
+			<?php else : ?>
+				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+					<input type="hidden" name="action" value="mpd_export_pdf">
+					<?php wp_nonce_field( 'mpd_export_pdf' ); ?>
+					<table class="widefat striped" style="max-width: 1000px">
+						<thead>
+							<tr>
+								<td class="check-column"><input type="checkbox" id="mpd-select-all" aria-label="<?php esc_attr_e( 'Select all events', 'cen-event-member-pictures-creator' ); ?>"></td>
+								<th><?php esc_html_e( 'Event', 'cen-event-member-pictures-creator' ); ?></th>
+								<th><?php esc_html_e( 'Start date', 'cen-event-member-pictures-creator' ); ?></th>
+								<th><?php esc_html_e( 'Status', 'cen-event-member-pictures-creator' ); ?></th>
+							</tr>
+						</thead>
+						<tbody>
+							<?php foreach ( $events as $event ) : ?>
+								<?php $status = get_post_status_object( $event->post_status ); ?>
+								<tr>
+									<th class="check-column"><input class="mpd-event" type="checkbox" name="event_ids[]" value="<?php echo esc_attr( $event->ID ); ?>" aria-label="<?php echo esc_attr( sprintf( __( 'Select %s', 'cen-event-member-pictures-creator' ), get_the_title( $event ) ) ); ?>"></th>
+									<td><strong><?php echo esc_html( get_the_title( $event ) ); ?></strong></td>
+									<td><?php echo esc_html( $this->get_event_start_date( $event->ID ) ); ?></td>
+									<td><?php echo esc_html( $status ? $status->label : $event->post_status ); ?></td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+					<?php submit_button( __( 'Download PDF', 'cen-event-member-pictures-creator' ) ); ?>
+				</form>
+				<script>
+					document.getElementById('mpd-select-all').addEventListener('change', function () {
+						document.querySelectorAll('.mpd-event').forEach(function (checkbox) {
+							checkbox.checked = document.getElementById('mpd-select-all').checked;
+						});
+					});
+				</script>
+			<?php endif; ?>
 		</div>
 		<?php
 	}
 
-	/** Return the nonce-protected PDF URL. */
-	private function get_export_url() {
-		return wp_nonce_url( admin_url( 'admin-post.php?action=mpd_export_pdf' ), 'mpd_export_pdf' );
-	}
-
-	/** Stream a PDF containing every WordPress user. */
+	/** Stream a PDF containing RSVP attendees from the selected events. */
 	public function export_pdf() {
-		if ( ! current_user_can( 'list_users' ) ) {
+		if ( ! current_user_can( 'edit_tribe_events' ) ) {
 			wp_die(
-				esc_html__( 'You are not allowed to export the user directory.', 'member-photo-directory' ),
-				esc_html__( 'Access denied', 'member-photo-directory' ),
+				esc_html__( 'You are not allowed to export event attendees.', 'cen-event-member-pictures-creator' ),
+				esc_html__( 'Access denied', 'cen-event-member-pictures-creator' ),
 				array( 'response' => 403 )
 			);
 		}
 
-		if ( ! isset( $_GET['_wpnonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_GET['_wpnonce'] ) ), 'mpd_export_pdf' ) ) {
+		check_admin_referer( 'mpd_export_pdf' );
+
+		if ( ! $this->event_tickets_is_available() ) {
+			wp_die( esc_html__( 'The Event Tickets plugin is not active.', 'cen-event-member-pictures-creator' ) );
+		}
+
+		$submitted_ids = isset( $_POST['event_ids'] ) ? (array) wp_unslash( $_POST['event_ids'] ) : array();
+		$event_ids     = array_values( array_unique( array_filter( array_map( 'absint', $submitted_ids ) ) ) );
+		$event_ids     = array_values(
+			array_filter(
+				$event_ids,
+				static function ( $event_id ) {
+					return 'tribe_events' === get_post_type( $event_id );
+				}
+			)
+		);
+
+		if ( empty( $event_ids ) ) {
 			wp_die(
-				esc_html__( 'The PDF link has expired. Please return to the directory and try again.', 'member-photo-directory' ),
-				esc_html__( 'PDF link expired', 'member-photo-directory' ),
-				array( 'response' => 403 )
+				esc_html__( 'Please select at least one valid event.', 'cen-event-member-pictures-creator' ),
+				esc_html__( 'No events selected', 'cen-event-member-pictures-creator' ),
+				array( 'back_link' => true )
 			);
+		}
+
+		$attendees = $this->get_unique_rsvp_attendees( $event_ids );
+		if ( empty( $attendees ) ) {
+			wp_safe_redirect( add_query_arg( 'mpd_notice', 'no_attendees', $this->get_export_page_url() ) );
+			exit;
 		}
 
 		$pdf = new MPD_PDF();
-		foreach ( $this->get_directory_users() as $user ) {
+		foreach ( $attendees as $attendee ) {
 			$pdf->add_member(
-				$this->get_user_name( $user ),
-				$user->user_email,
-				$this->get_pdf_avatar_path( $user->ID )
+				$attendee['name'],
+				$attendee['email'],
+				$this->get_pdf_avatar_path( $attendee['avatar_identity'], $attendee['cache_key'] )
 			);
 		}
 
-		$pdf->download( 'wordpress-user-directory-' . gmdate( 'Y-m-d' ) . '.pdf' );
+		$pdf->download( 'event-rsvp-pictures-' . gmdate( 'Y-m-d' ) . '.pdf' );
+	}
+
+	/** Return events in descending start-date order. */
+	private function get_events() {
+		return get_posts(
+			array(
+				'post_type'      => 'tribe_events',
+				'post_status'    => array( 'publish', 'future', 'draft', 'pending', 'private' ),
+				'posts_per_page' => -1,
+				'meta_key'       => '_EventStartDate', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+				'orderby'        => 'meta_value',
+				'order'          => 'DESC',
+			)
+		);
+	}
+
+	/** Format an event start date with TEC when available. */
+	private function get_event_start_date( $event_id ) {
+		if ( function_exists( 'tribe_get_start_date' ) ) {
+			return tribe_get_start_date( $event_id, false, get_option( 'date_format' ) . ' ' . get_option( 'time_format' ) );
+		}
+
+		return (string) get_post_meta( $event_id, '_EventStartDate', true );
+	}
+
+	/** Whether Event Tickets' RSVP provider is available. */
+	private function event_tickets_is_available() {
+		return class_exists( 'Tribe__Tickets__RSVP' );
 	}
 
 	/**
-	 * Return every WordPress user, sorted by display name.
+	 * Collect Going RSVP attendees with WordPress accounts and deduplicate by user ID.
 	 *
-	 * @return WP_User[]
+	 * @param int[] $event_ids Event post IDs.
+	 * @return array<int,array{name:string,email:string,avatar_identity:mixed,cache_key:string}>
 	 */
-	private function get_directory_users() {
-		return get_users(
-			array(
-				'orderby' => 'display_name',
-				'order'   => 'ASC',
-				'fields'  => 'all',
-			)
+	private function get_unique_rsvp_attendees( $event_ids ) {
+		$rsvp   = Tribe__Tickets__RSVP::get_instance();
+		$people = array();
+
+		foreach ( $event_ids as $event_id ) {
+			$event_attendees = $rsvp->get_attendees_by_id( $event_id );
+			if ( ! is_array( $event_attendees ) ) {
+				continue;
+			}
+
+			foreach ( $event_attendees as $attendee ) {
+				if ( ! is_array( $attendee ) || ! $this->attendee_is_going( $attendee ) ) {
+					continue;
+				}
+
+				$name    = trim( (string) $this->first_value( $attendee, array( 'holder_name', 'purchaser_name' ) ) );
+				$email   = sanitize_email( $this->first_value( $attendee, array( 'holder_email', 'purchaser_email' ) ) );
+				$user_id = isset( $attendee['user_id'] ) ? absint( $attendee['user_id'] ) : 0;
+
+				if ( ! $user_id && $email ) {
+					$user = get_user_by( 'email', $email );
+					$user_id = $user ? $user->ID : 0;
+				}
+
+				if ( ! $user_id ) {
+					continue;
+				}
+
+				$user = get_userdata( $user_id );
+				if ( ! $user ) {
+					continue;
+				}
+
+				$name  = $name ? $name : $this->get_user_name( $user );
+				$email = $email ? $email : $user->user_email;
+
+				$key = 'user:' . $user_id;
+				if ( isset( $people[ $key ] ) ) {
+					continue;
+				}
+
+				$people[ $key ] = array(
+					'name'            => $name,
+					'email'           => $email,
+					'avatar_identity' => $user_id,
+					'cache_key'       => 'user-' . $user_id,
+				);
+			}
+		}
+
+		uasort(
+			$people,
+			static function ( $left, $right ) {
+				return strcasecmp( $left['name'], $right['name'] );
+			}
 		);
+
+		return array_values( $people );
+	}
+
+	/** Return true when Event Tickets marks the RSVP as Going. */
+	private function attendee_is_going( $attendee ) {
+		$status = isset( $attendee['order_status'] ) ? strtolower( trim( (string) $attendee['order_status'] ) ) : '';
+
+		return 'yes' === $status;
+	}
+
+	/** Get the first non-empty attendee field from a list of keys. */
+	private function first_value( $attendee, $keys ) {
+		foreach ( $keys as $key ) {
+			if ( isset( $attendee[ $key ] ) && '' !== trim( (string) $attendee[ $key ] ) ) {
+				return $attendee[ $key ];
+			}
+		}
+
+		return '';
 	}
 
 	/** Use first and last name, falling back to the account display name. */
@@ -108,19 +276,24 @@ final class MPD_Plugin {
 		return $name ? $name : $user->display_name;
 	}
 
+	/** Return the export page URL. */
+	private function get_export_page_url() {
+		return admin_url( 'edit.php?post_type=tribe_events&page=mpd-export' );
+	}
+
 	/**
-	 * Download and cache a user's filtered WordPress avatar as a square JPEG.
+	 * Download and cache a filtered WordPress avatar as a square JPEG.
 	 *
-	 * @param int $user_id WordPress user ID.
+	 * @param mixed  $identity  User ID or attendee email accepted by get_avatar_url().
+	 * @param string $cache_key Safe, stable cache identifier.
 	 * @return string Empty string when no usable avatar is available.
 	 */
-	private function get_pdf_avatar_path( $user_id ) {
-		$avatar_url = get_avatar_url(
-			$user_id,
-			array(
-				'size' => 600,
-			)
-		);
+	private function get_pdf_avatar_path( $identity, $cache_key ) {
+		if ( ! $identity ) {
+			return '';
+		}
+
+		$avatar_url = get_avatar_url( $identity, array( 'size' => 600 ) );
 		if ( ! $avatar_url ) {
 			return '';
 		}
@@ -130,8 +303,8 @@ final class MPD_Plugin {
 			return '';
 		}
 
-		$cache_dir = trailingslashit( $upload_dir['basedir'] ) . 'member-photo-directory';
-		$target    = trailingslashit( $cache_dir ) . 'avatar-' . absint( $user_id ) . '.jpg';
+		$cache_dir = trailingslashit( $upload_dir['basedir'] ) . 'event-rsvp-pictures';
+		$target    = trailingslashit( $cache_dir ) . 'avatar-' . sanitize_file_name( $cache_key ) . '.jpg';
 		if ( is_readable( $target ) && filemtime( $target ) > time() - WEEK_IN_SECONDS ) {
 			return $target;
 		}
@@ -139,9 +312,9 @@ final class MPD_Plugin {
 		$response = wp_safe_remote_get(
 			$avatar_url,
 			array(
-				'timeout'     => 12,
-				'redirection' => 3,
-				'user-agent'  => 'WordPress Member Photo Directory/' . MPD_VERSION,
+				'timeout'             => 12,
+				'redirection'         => 3,
+				'user-agent'          => 'CEN Event RSVP Pictures/' . MPD_VERSION,
 				'limit_response_size' => 5 * MB_IN_BYTES,
 			)
 		);
@@ -155,7 +328,7 @@ final class MPD_Plugin {
 		}
 
 		wp_mkdir_p( $cache_dir );
-		$temporary = wp_tempnam( 'mpd-avatar-' . $user_id );
+		$temporary = wp_tempnam( 'mpd-avatar-' . $cache_key );
 		if ( ! $temporary || false === file_put_contents( $temporary, $body ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
 			return is_readable( $target ) ? $target : '';
 		}

@@ -1,6 +1,6 @@
 <?php
 /**
- * Small, dependency-free PDF writer for the member directory.
+ * Small, dependency-free PDF writer for the RSVP picture directory.
  *
  * @package MemberPhotoDirectory
  */
@@ -28,7 +28,7 @@ final class MPD_PDF {
 		$filename = sanitize_file_name( $filename );
 
 		if ( headers_sent() ) {
-			wp_die( esc_html__( 'The PDF could not be sent because output had already started.', 'member-photo-directory' ) );
+			wp_die( esc_html__( 'The PDF could not be sent because output had already started.', 'cen-event-member-pictures-creator' ) );
 		}
 
 		nocache_headers();
@@ -56,7 +56,7 @@ final class MPD_PDF {
 
 		$objects[ $regular_id ] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
 		$objects[ $bold_id ]    = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
-		$objects[ $info_id ]    = '<< /Title (Member Directory) /Creator (Member Photo Directory for WordPress) /CreationDate (D:' . gmdate( 'YmdHis' ) . 'Z) >>';
+		$objects[ $info_id ]    = '<< /Title (Event RSVP Pictures) /Creator (CEN Event Member Pictures Creator) /CreationDate (D:' . gmdate( 'YmdHis' ) . 'Z) >>';
 
 		$groups = array_chunk( $this->members, 20 );
 		if ( empty( $groups ) ) {
@@ -135,7 +135,7 @@ final class MPD_PDF {
 		$content = '';
 
 		if ( empty( $members ) ) {
-			$content .= "0.3 0.3 0.3 rg\nBT /F1 11 Tf 30 740 Td (No users were found.) Tj ET\n";
+			$content .= "0.3 0.3 0.3 rg\nBT /F1 11 Tf 30 740 Td (No RSVP attendees were found.) Tj ET\n";
 		}
 
 		foreach ( $members as $index => $member ) {
