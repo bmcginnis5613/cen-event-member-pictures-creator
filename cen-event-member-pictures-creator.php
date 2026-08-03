@@ -1,13 +1,12 @@
 <?php
 /**
- * Plugin Name:       WordPress User Photo Directory
- * Description:       Export every WordPress user's name, email, and avatar to a photo directory PDF.
- * Version:           1.2.0
+ * Plugin Name:       CEN Event Member Pictures Creator
+ * Description:       Export event attendees information and photos to PDF.
+ * Version:           1.0.0
  * Requires at least: 6.2
  * Requires PHP:      7.4
  * Author:            Custom Plugin
- * License:           GPL-2.0-or-later
- * Text Domain:       member-photo-directory
+ * Text Domain:       cen-event-member-pictures-creator
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
