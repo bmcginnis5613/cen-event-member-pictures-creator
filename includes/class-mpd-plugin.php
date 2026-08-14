@@ -70,7 +70,7 @@ final class MPD_Plugin {
 			<?php endif; ?>
 
 			<?php if ( empty( $events ) ) : ?>
-				<p><?php esc_html_e( 'No events were found.', 'cen-event-member-pictures-creator' ); ?></p>
+				<p><?php esc_html_e( 'No current or upcoming events were found.', 'cen-event-member-pictures-creator' ); ?></p>
 			<?php else : ?>
 				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
 					<input type="hidden" name="action" value="mpd_export_pdf">
@@ -165,7 +165,7 @@ final class MPD_Plugin {
 		$pdf->download( 'event-rsvp-pictures-' . gmdate( 'Y-m-d' ) . '.pdf' );
 	}
 
-	/** Return events in descending start-date order. */
+	/** Return current and upcoming events in ascending start-date order. */
 	private function get_events() {
 		return get_posts(
 			array(
@@ -174,7 +174,15 @@ final class MPD_Plugin {
 				'posts_per_page' => -1,
 				'meta_key'       => '_EventStartDate', // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
 				'orderby'        => 'meta_value',
-				'order'          => 'DESC',
+				'order'          => 'ASC',
+				'meta_query'     => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+					array(
+						'key'     => '_EventEndDate',
+						'value'   => current_time( 'mysql' ),
+						'compare' => '>=',
+						'type'    => 'DATETIME',
+					),
+				),
 			)
 		);
 	}
