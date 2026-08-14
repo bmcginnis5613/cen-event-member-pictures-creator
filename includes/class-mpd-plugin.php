@@ -15,6 +15,9 @@ final class MPD_Plugin {
 	const XPROFILE_TITLE_FIELD_ID   = 4;
 	const XPROFILE_COMPANY_FIELD_ID = 5;
 
+	/** BuddyBoss profile types that should never be included in exports. */
+	const EXCLUDED_MEMBER_TYPES = array( 'admin', 'admins', 'staff', 'facilitator', 'facilitators' );
+
 	/** @var MPD_Plugin|null */
 	private static $instance = null;
 
@@ -58,12 +61,12 @@ final class MPD_Plugin {
 		?>
 		<div class="wrap">
 			<h1><?php esc_html_e( 'Export RSVP Pictures', 'cen-event-member-pictures-creator' ); ?></h1>
-			<p><?php esc_html_e( 'Select one or more events. The PDF will contain each unique WordPress user who RSVP\'d as Going, including their name, title, company, email address, and WordPress avatar. Guest registrations without a WordPress account are excluded.', 'cen-event-member-pictures-creator' ); ?></p>
+			<p><?php esc_html_e( 'Select one or more events. The PDF will contain each unique WordPress user who RSVP\'d as Going, including their name, title, company, email address, and WordPress avatar. Guest registrations without a WordPress account and members with Admin, Staff, or Facilitator BuddyBoss profile types are excluded.', 'cen-event-member-pictures-creator' ); ?></p>
 
 			<?php if ( ! $this->event_tickets_is_available() ) : ?>
 				<div class="notice notice-error inline"><p><?php esc_html_e( 'The Event Tickets plugin must be active before RSVP attendees can be exported.', 'cen-event-member-pictures-creator' ); ?></p></div>
 			<?php elseif ( isset( $_GET['mpd_notice'] ) && 'no_attendees' === sanitize_key( wp_unslash( $_GET['mpd_notice'] ) ) ) : // phpcs:ignore WordPress.Security.NonceVerification.Recommended ?>
-				<div class="notice notice-warning inline"><p><?php esc_html_e( 'No Going RSVP attendees with WordPress accounts were found for the selected events.', 'cen-event-member-pictures-creator' ); ?></p></div>
+				<div class="notice notice-warning inline"><p><?php esc_html_e( 'No eligible Going RSVP attendees were found for the selected events.', 'cen-event-member-pictures-creator' ); ?></p></div>
 			<?php endif; ?>
 
 			<?php if ( empty( $events ) ) : ?>
@@ -191,7 +194,7 @@ final class MPD_Plugin {
 	}
 
 	/**
-	 * Collect Going RSVP attendees with WordPress accounts and deduplicate by user ID.
+	 * Collect eligible Going RSVP attendees and deduplicate by user ID.
 	 *
 	 * @param int[] $event_ids Event post IDs.
 	 * @return array<int,array{name:string,email:string,title:string,company:string,sort_last_name:string,avatar_identity:mixed,cache_key:string}>
@@ -221,6 +224,10 @@ final class MPD_Plugin {
 				}
 
 				if ( ! $user_id ) {
+					continue;
+				}
+
+				if ( $this->user_has_excluded_member_type( $user_id ) ) {
 					continue;
 				}
 
@@ -286,6 +293,37 @@ final class MPD_Plugin {
 		$name  = trim( $first . ' ' . $last );
 
 		return $name ? $name : $user->display_name;
+	}
+
+	/** Return true when a user has an excluded BuddyBoss/BuddyPress profile type. */
+	private function user_has_excluded_member_type( $user_id ) {
+		if ( ! function_exists( 'bp_get_member_type' ) ) {
+			return false;
+		}
+
+		$member_types = bp_get_member_type( absint( $user_id ), false );
+		if ( ! is_array( $member_types ) ) {
+			return false;
+		}
+
+		foreach ( $member_types as $member_type ) {
+			$names = array( $member_type );
+			if ( function_exists( 'bp_get_member_type_object' ) ) {
+				$type_object = bp_get_member_type_object( $member_type );
+				if ( $type_object && ! empty( $type_object->labels ) ) {
+					$names[] = isset( $type_object->labels['name'] ) ? $type_object->labels['name'] : '';
+					$names[] = isset( $type_object->labels['singular_name'] ) ? $type_object->labels['singular_name'] : '';
+				}
+			}
+
+			foreach ( $names as $name ) {
+				if ( in_array( sanitize_title( (string) $name ), self::EXCLUDED_MEMBER_TYPES, true ) ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
 	}
 
 	/** Return the best available last name for alphabetizing the PDF. */
